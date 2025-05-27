@@ -7,6 +7,19 @@ from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+store = {}
+
+
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    if session_id not in store:
+        store[session_id] = ChatMessageHistory()
+    return store[session_id]
+
+
 def get_retriever():
     embedding = OpenAIEmbeddings(model='text-embedding-3-large')
     index_name = 'tex-index'
@@ -36,7 +49,7 @@ def get_dicionary_chain():
     return dictionary_chain
 
 
-def get_qa_chain():
+def get_rag_chain():
     llm = get_llm()
     retriever = get_retriever()
 
@@ -78,11 +91,27 @@ def get_qa_chain():
     question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-    return rag_chain
+
+    conversational_rag_chain = RunnableWithMessageHistory(
+        rag_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+        output_messages_key="answer",
+    ).pick('answer')
+
+    return conversational_rag_chain
 
 def get_ai_message(user_message):
     dictionary_chain = get_dicionary_chain()
-    qa_chain = get_qa_chain()
-    tax_chain = {"query": dictionary_chain} | qa_chain
-    ai_message = tax_chain.invoke({"question": user_message})
-    return ai_message['result']
+    rag_chain = get_rag_chain()
+    tax_chain = {"input": dictionary_chain} | rag_chain
+    ai_message = tax_chain.invoke(
+        {
+            "question": user_message
+        }, 
+        config={
+        "configurable": {"session_id": "abc123"}
+        },
+    )
+    return ai_message
